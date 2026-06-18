@@ -23,6 +23,12 @@ import {
   getMoodLabel
 } from '../utils/gameUtils'
 
+function triggerAutoSave() {
+  import('./saveStore').then(({ useSaveStore }) => {
+    useSaveStore().autoSave()
+  })
+}
+
 export const useGameStore = defineStore('game', () => {
   const day = ref(1)
   const timeSlot = ref<TimeOfDay>('morning')
@@ -241,6 +247,7 @@ export const useGameStore = defineStore('game', () => {
 
     addLog('action', message, characterId)
     advanceTime()
+    triggerAutoSave()
     return true
   }
 
@@ -282,6 +289,7 @@ export const useGameStore = defineStore('game', () => {
 
     addLog('action', message, characterId)
     advanceTime()
+    triggerAutoSave()
     return true
   }
 
@@ -298,6 +306,7 @@ export const useGameStore = defineStore('game', () => {
 
     addLog('action', `💼 打工赚了 ${earned} 代币（角色们的心情略有下降）`)
     advanceTime()
+    triggerAutoSave()
     return true
   }
 
@@ -384,13 +393,15 @@ export const useGameStore = defineStore('game', () => {
     const result = eventSystem.applyEffects(choice.effects, ctx, mutations)
 
     result.logs.forEach(log => {
-      addLog(log.type as any, log.message, log.characterId)
+      addLog(log.type, log.message, log.characterId)
     })
 
     addLog('story', `选择了：${choice.text}`)
 
     currentEvent.value = null
     showEventModal.value = false
+
+    triggerAutoSave()
 
     if (result.nextEventId) {
       const nextEvent = gameConfig.events.find(e => e.id === result.nextEventId)

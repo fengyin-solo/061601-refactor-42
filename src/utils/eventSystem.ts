@@ -21,7 +21,7 @@ export interface GameStateContext {
 
 export interface EffectApplyResult {
   nextEventId?: string
-  logs: { type: string; message: string; characterId?: string }[]
+  logs: { type: 'event' | 'system'; message: string; characterId?: string }[]
 }
 
 export interface EffectMutations {
@@ -121,7 +121,7 @@ eventSystem.registerEffect('affinity', (effect, ctx, mutations) => {
   return {
     logs: [
       {
-        type: 'effect',
+        type: 'event',
         message: `${charConfig?.name || e.characterId} 好感 ${sign}${e.value}`,
         characterId: e.characterId
       }
@@ -139,7 +139,7 @@ eventSystem.registerEffect('mood', (effect, ctx, mutations) => {
   return {
     logs: [
       {
-        type: 'effect',
+        type: 'event',
         message: `${charConfig?.name || e.characterId} 心情 ${sign}${e.value}`,
         characterId: e.characterId
       }
@@ -152,7 +152,7 @@ eventSystem.registerEffect('resource', (effect, ctx, mutations) => {
   mutations.updateResources(e.value)
   const sign = e.value > 0 ? '+' : ''
   return {
-    logs: [{ type: 'effect', message: `代币 ${sign}${e.value}` }]
+    logs: [{ type: 'event', message: `代币 ${sign}${e.value}` }]
   }
 })
 
