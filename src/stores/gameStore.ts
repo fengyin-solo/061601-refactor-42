@@ -1,7 +1,16 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { TimeOfDay, ActionType, GameEventConfig, EventChoice } from '../types/game'
+import type {
+  TimeOfDay,
+  ActionType,
+  GameEventConfig,
+  EventChoice,
+  CharacterState,
+  LogEntry,
+  HistorySnapshot
+} from '../types/game'
 import gameConfig from '../config/gameConfig'
+import eventSystem, { createGameStateContext } from '../utils/eventSystem'
 import {
   clamp,
   randomInt,
@@ -13,35 +22,6 @@ import {
   getNextTimeSlot,
   getMoodLabel
 } from '../utils/gameUtils'
-
-export interface CharacterState {
-  id: string
-  affinity: number
-  mood: number
-  unlocked: boolean
-}
-
-export interface LogEntry {
-  id: number
-  day: number
-  time: TimeOfDay
-  type: 'action' | 'event' | 'system' | 'story'
-  message: string
-  characterId?: string
-  timestamp: number
-}
-
-export interface HistorySnapshot {
-  day: number
-  timeSlot: TimeOfDay
-  actionsRemaining: number
-  resources: number
-  characters: CharacterState[]
-  flags: string[]
-  triggeredEvents: string[]
-  collectedCards: string[]
-  logs: LogEntry[]
-}
 
 export const useGameStore = defineStore('game', () => {
   const day = ref(1)
@@ -324,33 +304,26 @@ export const useGameStore = defineStore('game', () => {
   function checkAndTriggerEvent() {
     if (currentEvent.value) return
 
-    const availableEvents = gameConfig.events.filter(event => {
-      if (event.once && triggeredEvents.value.includes(event.id)) return false
-
-      const cond = event.triggerCondition
-
-      if (cond.minDay !== undefined && day.value < cond.minDay) return false
-      if (cond.maxDay !== undefined && day.value > cond.maxDay) return false
-      if (cond.timeOfDay !== undefined && timeSlot.value !== cond.timeOfDay) return false
-
-      if (cond.characterId) {
-        const charState = getCharacterState(cond.characterId)
-        if (!charState || !charState.unlocked) return false
-        if (cond.minAffinity !== undefined && charState.affinity < cond.minAffinity) return false
-        if (cond.maxAffinity !== undefined && charState.affinity > cond.maxAffinity) return false
-      }
-
-      if (cond.requiredFlags) {
-        if (!cond.requiredFlags.every(f => flags.value.includes(f))) return false
-      }
-
-      return true
+    const ctx = createGameStateContext({
+      day: day.value,
+      timeSlot: timeSlot.value,
+      resources: resources.value,
+      characters: characters.value,
+      flags: flags.value,
+      triggeredEvents: triggeredEvents.value,
+      collectedCards: collectedCards.value
     })
 
+    const availableEvents = eventSystem.findTriggerableEvents(
+      gameConfig.events,
+      ctx
+    )
+
     if (availableEvents.length > 0) {
-      availableEvents.sort((a, b) => b.priority - a.priority)
-      const topEvent = availableEvents[0]
-      triggerEvent(topEvent)
+      const topEvent = eventSystem.selectHighestPriorityEvent(availableEvents)
+      if (topEvent) {
+        triggerEvent(topEvent)
+      }
     }
   }
 
@@ -364,43 +337,63 @@ export const useGameStore = defineStore('game', () => {
   function handleEventChoice(choice: EventChoice) {
     saveHistory()
 
-    choice.effects.forEach(effect => {
-      if (effect.affinityChange !== undefined) {
-        updateCharacterAffinity(effect.characterId, effect.affinityChange)
-      }
-      if (effect.moodChange !== undefined) {
-        updateCharacterMood(effect.characterId, effect.moodChange)
-      }
+    const ctx = createGameStateContext({
+      day: day.value,
+      timeSlot: timeSlot.value,
+      resources: resources.value,
+      characters: characters.value,
+      flags: flags.value,
+      triggeredEvents: triggeredEvents.value,
+      collectedCards: collectedCards.value
     })
 
-    if (choice.resourceChange !== undefined) {
-      resources.value = Math.max(0, resources.value + choice.resourceChange)
-    }
-
-    if (choice.unlockCharacterId) {
-      const char = characters.value.find(c => c.id === choice.unlockCharacterId)
-      if (char) {
-        char.unlocked = true
-        const charConfig = gameConfig.characters.find(c => c.id === choice.unlockCharacterId)
-        addLog('system', `✨ 解锁新角色：${charConfig?.name || choice.unlockCharacterId}`)
+    const mutations = {
+      updateAffinity: (characterId: string, change: number) => {
+        updateCharacterAffinity(characterId, change)
+      },
+      updateMood: (characterId: string, change: number) => {
+        updateCharacterMood(characterId, change)
+      },
+      updateResources: (change: number) => {
+        resources.value = Math.max(0, resources.value + change)
+      },
+      unlockCharacter: (characterId: string) => {
+        const char = characters.value.find(c => c.id === characterId)
+        if (char) {
+          char.unlocked = true
+        }
+      },
+      addCard: (cardId: string) => {
+        if (!collectedCards.value.includes(cardId)) {
+          collectedCards.value.push(cardId)
+        }
+      },
+      addFlag: (flag: string) => {
+        if (!flags.value.includes(flag)) {
+          flags.value.push(flag)
+        }
+      },
+      removeFlag: (flag: string) => {
+        const idx = flags.value.indexOf(flag)
+        if (idx !== -1) {
+          flags.value.splice(idx, 1)
+        }
       }
     }
 
-    if (choice.addCardId) {
-      if (!collectedCards.value.includes(choice.addCardId)) {
-        collectedCards.value.push(choice.addCardId)
-        const card = gameConfig.cards.find(c => c.id === choice.addCardId)
-        addLog('system', `🎴 获得卡牌：${card?.name || choice.addCardId}`)
-      }
-    }
+    const result = eventSystem.applyEffects(choice.effects, ctx, mutations)
+
+    result.logs.forEach(log => {
+      addLog(log.type as any, log.message, log.characterId)
+    })
 
     addLog('story', `选择了：${choice.text}`)
 
     currentEvent.value = null
     showEventModal.value = false
 
-    if (choice.nextEventId) {
-      const nextEvent = gameConfig.events.find(e => e.id === choice.nextEventId)
+    if (result.nextEventId) {
+      const nextEvent = gameConfig.events.find(e => e.id === result.nextEventId)
       if (nextEvent) {
         setTimeout(() => triggerEvent(nextEvent), 300)
       }

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import gameConfig from '../config/gameConfig'
+import type { EventEffect } from '../types/game'
 
 const gameStore = useGameStore()
 
@@ -19,20 +20,64 @@ function handleChoice(choiceId: string) {
   }
 }
 
-function formatEffect(effect: any): string {
-  let result = ''
-  if (effect.affinityChange !== undefined) {
-    const char = gameConfig.characters.find(c => c.id === effect.characterId)
-    const name = char?.name || effect.characterId
-    const sign = effect.affinityChange > 0 ? '+' : ''
-    result += `${name} 好感 ${sign}${effect.affinityChange}`
+function formatEffect(effect: EventEffect): { text: string; positive: boolean; negative: boolean } {
+  let text = ''
+  let positive = false
+  let negative = false
+
+  switch (effect.type) {
+    case 'affinity': {
+      const char = gameConfig.characters.find(c => c.id === effect.characterId)
+      const name = char?.name || effect.characterId
+      const sign = effect.value > 0 ? '+' : ''
+      text = `${name} 好感 ${sign}${effect.value}`
+      positive = effect.value > 0
+      negative = effect.value < 0
+      break
+    }
+    case 'mood': {
+      const char = gameConfig.characters.find(c => c.id === effect.characterId)
+      const name = char?.name || effect.characterId
+      const sign = effect.value > 0 ? '+' : ''
+      text = `${name} 心情 ${sign}${effect.value}`
+      positive = effect.value > 0
+      negative = effect.value < 0
+      break
+    }
+    case 'resource': {
+      const sign = effect.value > 0 ? '+' : ''
+      text = `代币 ${sign}${effect.value}`
+      positive = effect.value > 0
+      negative = effect.value < 0
+      break
+    }
+    case 'unlock_character': {
+      const char = gameConfig.characters.find(c => c.id === effect.characterId)
+      text = `解锁角色：${char?.name || effect.characterId}`
+      positive = true
+      break
+    }
+    case 'add_card': {
+      const card = gameConfig.cards.find(c => c.id === effect.cardId)
+      text = `获得卡牌：${card?.name || effect.cardId}`
+      positive = true
+      break
+    }
+    default:
+      break
   }
-  if (effect.moodChange !== undefined) {
-    if (result) result += '，'
-    const sign = effect.moodChange > 0 ? '+' : ''
-    result += `心情 ${sign}${effect.moodChange}`
-  }
-  return result
+
+  return { text, positive, negative }
+}
+
+function getVisibleEffects(effects: EventEffect[]): EventEffect[] {
+  return effects.filter(e =>
+    e.type === 'affinity' ||
+    e.type === 'mood' ||
+    e.type === 'resource' ||
+    e.type === 'unlock_character' ||
+    e.type === 'add_card'
+  )
 }
 </script>
 
@@ -62,15 +107,12 @@ function formatEffect(effect: any): string {
             <span class="choice-text">{{ choice.text }}</span>
             <div class="choice-effects">
               <span 
-                v-for="(effect, idx) in choice.effects" 
+                v-for="(effect, idx) in getVisibleEffects(choice.effects)" 
                 :key="idx"
                 class="effect-tag"
-                :class="{ positive: effect.affinityChange > 0 || effect.moodChange > 0, negative: effect.affinityChange < 0 || effect.moodChange < 0 }"
+                :class="{ positive: formatEffect(effect).positive, negative: formatEffect(effect).negative }"
               >
-                {{ formatEffect(effect) }}
-              </span>
-              <span v-if="choice.resourceChange" class="effect-tag" :class="{ positive: choice.resourceChange > 0, negative: choice.resourceChange < 0 }">
-                代币 {{ choice.resourceChange > 0 ? '+' : '' }}{{ choice.resourceChange }}
+                {{ formatEffect(effect).text }}
               </span>
             </div>
           </button>
